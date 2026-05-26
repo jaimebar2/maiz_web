@@ -1,14 +1,14 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { api } from '../services/api'
 
 const CAMPOS = [
-  { key: 'humedad_suelo',   label: 'Humedad suelo (%)',   placeholder: '0-100',  default: 65 },
-  { key: 'temperatura',     label: 'Temperatura (°C)',     placeholder: '10-42',  default: 27 },
-  { key: 'lluvia_mm',       label: 'Lluvia (mm)',          placeholder: '0-200',  default: 8  },
-  { key: 'ph_suelo',        label: 'pH del suelo',         placeholder: '5.0-8.0',default: 6.5},
-  { key: 'fertilizante_kg', label: 'Fertilizante (kg/ha)', placeholder: '0-100',  default: 22 },
-  { key: 'radiacion_solar', label: 'Radiación solar (MJ)', placeholder: '8-30',   default: 20 },
-  { key: 'dias_siembra',    label: 'Días desde siembra',   placeholder: '1-180',  default: 90 },
+  { key: 'humedad_suelo',   label: 'Humedad suelo (%)',    placeholder: '0-100',   default: 65  },
+  { key: 'temperatura',     label: 'Temperatura (°C)',      placeholder: '10-42',   default: 27  },
+  { key: 'lluvia_mm',       label: 'Lluvia (mm)',           placeholder: '0-200',   default: 8   },
+  { key: 'ph_suelo',        label: 'pH del suelo',          placeholder: '5.0-8.0', default: 6.5 },
+  { key: 'fertilizante_kg', label: 'Fertilizante (kg/ha)', placeholder: '0-100',   default: 22  },
+  { key: 'radiacion_solar', label: 'Radiación solar (MJ)', placeholder: '8-30',    default: 20  },
+  { key: 'dias_siembra',    label: 'Días desde siembra',   placeholder: '1-180',   default: 90  },
 ]
 
 function ResultCard({ icon, title, children, color = 'var(--verde)' }) {
@@ -35,37 +35,119 @@ function NivelBadge({ nivel }) {
 
 export default function AnalisisIA({ cultivoId }) {
   const initForm = Object.fromEntries(CAMPOS.map(c => [c.key, c.default]))
-  const [form, setForm]       = useState(initForm)
+  const [form, setForm]           = useState(initForm)
   const [resultado, setResultado] = useState(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError]     = useState(null)
+  const [loading, setLoading]     = useState(false)
+  const [error, setError]         = useState(null)
+
+  // Selector de cultivos
+  const [cultivos, setCultivos]         = useState([])
+  const [cultivoSel, setCultivoSel]     = useState(cultivoId || '')
+  const [loadingCultivos, setLoadingCultivos] = useState(true)
+
+  useEffect(() => {
+    api.getCultivos()
+      .then(res => {
+        const lista = res.data?.data || res.data || []
+        setCultivos(lista)
+        if (cultivoId) setCultivoSel(cultivoId)
+      })
+      .catch(() => setCultivos([]))
+      .finally(() => setLoadingCultivos(false))
+  }, [cultivoId])
+
+  // Al seleccionar cultivo cargar última medición automáticamente
+  const handleCultivoChange = async (id) => {
+    setCultivoSel(id)
+    if (!id) return
+    try {
+      const res = await api.getUltimaMedicion(id)
+      const m = res.data
+      if (m) {
+        setForm({
+          humedad_suelo:   m.humedad_suelo   ?? 65,
+          temperatura:     m.temperatura     ?? 27,
+          lluvia_mm:       m.lluvia_mm       ?? 8,
+          ph_suelo:        m.ph_suelo        ?? 6.5,
+          fertilizante_kg: m.fertilizante_kg ?? 22,
+          radiacion_solar: m.radiacion_solar ?? 20,
+          dias_siembra:    m.dias_siembra    ?? 90,
+        })
+      }
+    } catch {
+      // sin mediciones previas, usar valores por defecto
+    }
+  }
 
   const analizar = async () => {
     setLoading(true); setError(null)
     try {
       const payload = { ...form }
-      if (cultivoId) payload.cultivo_id = cultivoId
+      if (cultivoSel) payload.cultivo_id = cultivoSel
       const res = await api.analisisCompleto(payload)
       setResultado(res.data)
     } catch (e) { setError(e.message) }
     finally { setLoading(false) }
   }
 
+  const cultivoActual = cultivos.find(c => String(c.id) === String(cultivoSel))
+
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: 20, alignItems: 'start' }}>
       {/* Formulario */}
       <div className="card" style={{ position: 'sticky', top: 80 }}>
         <h3 style={{ marginBottom: 4, fontSize: 16 }}>Datos del cultivo</h3>
-        <p style={{ fontSize: 12, color: 'var(--gris-4)', marginBottom: 16 }}>Ingresa las condiciones actuales para el análisis IA.</p>
-        {error && <div style={{ color: 'var(--rojo)', marginBottom: 10, fontSize: 13 }}>{error}</div>}
-        {CAMPOS.map(f => (
-          <div key={f.key} style={{ marginBottom: 11 }}>
-            <label style={{ fontSize: 11, color: 'var(--gris-4)', display: 'block', marginBottom: 3 }}>{f.label}</label>
-            <input type="number" placeholder={f.placeholder} value={form[f.key]}
-              onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))} />
+        <p style={{ fontSize: 12, color: 'var(--gris-4)', marginBottom: 16 }}>
+          Selecciona un cultivo o ingresa los valores manualmente.
+        </p>
+
+        {/* Selector de cultivo */}
+        <div style={{ marginBottom: 16 }}>
+          <label style={{ fontSize: 11, color: 'var(--gris-4)', display: 'block', marginBottom: 4 }}>
+            🌽 Seleccionar cultivo
+          </label>
+          {loadingCultivos ? (
+            <div style={{ fontSize: 12, color: 'var(--gris-4)' }}>Cargando cultivos...</div>
+          ) : (
+            <select value={cultivoSel} onChange={e => handleCultivoChange(e.target.value)}>
+              <option value="">— Ingresar manualmente —</option>
+              {cultivos.map(c => (
+                <option key={c.id} value={c.id}>
+                  {c.nombre} ({c.hectareas} ha)
+                </option>
+              ))}
+            </select>
+          )}
+          {cultivoActual && (
+            <div style={{
+              marginTop: 8, padding: '8px 12px', borderRadius: 8,
+              background: 'var(--verde-cl)', fontSize: 12, color: 'var(--verde)'
+            }}>
+              📍 {cultivoActual.ubicacion || 'Sin ubicación'} — {cultivoActual.variedad || 'Sin variedad'}
+              {cultivoActual.total_mediciones > 0 && (
+                <div style={{ marginTop: 2, opacity: 0.8 }}>
+                  ✅ Datos cargados desde última medición
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div style={{ borderTop: '1px solid var(--gris-2)', paddingTop: 14, marginBottom: 12 }}>
+          <div style={{ fontSize: 11, color: 'var(--gris-4)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            Valores actuales
           </div>
-        ))}
-        <button className="btn btn-primary" onClick={analizar} disabled={loading} style={{ width: '100%', marginTop: 10 }}>
+          {error && <div style={{ color: 'var(--rojo)', marginBottom: 10, fontSize: 13 }}>{error}</div>}
+          {CAMPOS.map(f => (
+            <div key={f.key} style={{ marginBottom: 11 }}>
+              <label style={{ fontSize: 11, color: 'var(--gris-4)', display: 'block', marginBottom: 3 }}>{f.label}</label>
+              <input type="number" placeholder={f.placeholder} value={form[f.key]}
+                onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))} />
+            </div>
+          ))}
+        </div>
+
+        <button className="btn btn-primary" onClick={analizar} disabled={loading} style={{ width: '100%' }}>
           {loading ? 'Analizando...' : '🤖 Analizar con IA'}
         </button>
       </div>
@@ -75,7 +157,7 @@ export default function AnalisisIA({ cultivoId }) {
         {!resultado && !loading && (
           <div className="empty card" style={{ padding: 60 }}>
             <div style={{ fontSize: 48, marginBottom: 12 }}>🤖</div>
-            <p>Ajusta los valores y presiona <strong>Analizar con IA</strong> para ver los resultados.</p>
+            <p>Selecciona un cultivo o ajusta los valores y presiona <strong>Analizar con IA</strong>.</p>
           </div>
         )}
         {loading && <div className="spinner" />}
@@ -85,7 +167,7 @@ export default function AnalisisIA({ cultivoId }) {
 
             {/* Cosecha */}
             <ResultCard icon="🌽" title="Predicción de cosecha" color="var(--verde)">
-              <div style={{ display: 'flex', align: 'center', gap: 16, alignItems: 'center', marginBottom: 10 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 10 }}>
                 <div style={{ fontFamily: 'var(--font-display)', fontSize: 36, fontWeight: 600, color: 'var(--verde)' }}>
                   {resultado.cosecha.prediccion_kg} kg
                 </div>
@@ -114,11 +196,10 @@ export default function AnalisisIA({ cultivoId }) {
                     {resultado.agua.necesita_agua ? 'Necesita riego' : 'Sin necesidad de riego'}
                   </div>
                   <div style={{ fontSize: 12, color: 'var(--gris-4)' }}>
-                    Probabilidad de estrés hídrico: <strong>{resultado.agua.probabilidad}%</strong> — <NivelBadge nivel={resultado.agua.urgencia} />
+                    Probabilidad: <strong>{resultado.agua.probabilidad}%</strong> — <NivelBadge nivel={resultado.agua.urgencia} />
                   </div>
                 </div>
               </div>
-              {/* Barra de probabilidad */}
               <div style={{ height: 8, background: 'var(--gris-2)', borderRadius: 99, overflow: 'hidden', marginBottom: 10 }}>
                 <div style={{
                   height: '100%', borderRadius: 99,
